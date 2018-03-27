@@ -1,0 +1,254 @@
+---
+title: "Lab Seven"
+author: "Shenyang Guo"
+date: "3/1/2018"
+output:
+  slidy_presentation:
+    font-family: Arial
+    highlighter: prettify
+    md_extensions: +hard_line_breaks
+  html_document:
+    md_extensions: +hard_line_breaks
+  beamer_presentation:
+    fig_width: 6
+    fonttheme: professionalfonts
+    highlight: tango
+    md_extensions: +hard_line_breaks
+    slide_level: 2
+  pdf_document:
+    md_extensions: +hard_line_breaks
+    number_sections: yes
+  ioslides_presentation:
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##Example 1: Doctoral publications
+- This example (Long, 1990) studies the number of articles published by biochemists in the 3 years prior to receiving their doctorate. 
+- Below we run two models, the Poisson regression and the negbin regression. We than compare the two models.
+
+
+##Load the libraries and get the data
+```{r}
+#install.packages("margins")
+library(haven) #read dta file
+library(MASS) #Negative binomial regression
+library(lmtest) #model comparison
+library(stargazer) #models presentation
+library(sandwich)  #robust 
+library(margins) #Marginal effects
+library(ggplot2) #Graphs
+couart4 <- read_dta("D:/Dropbox/@2018 Spring/ADA/Class 7 Poisson and NegBin/couart4.dta")
+```
+
+
+##Poisson regression
+```{r}
+modP<- glm(art ~ factor(female) + factor(married) + kid5 + phd + mentor, family="poisson", data=couart4)
+summary(modP)
+```
+
+
+##Negative Binomial Regression 
+```{r}
+modN<- glm.nb(art ~ factor(female) + factor(married) + kid5 + phd + mentor, data=couart4)
+summary(modN)
+```
+
+
+##Compare models using likelihood ratio test
+```{r}
+lrtest(modP, modN)
+```
+The highly significant p-value means that the negbin regression is better than the Poisson regression, we should accept the negbin results other than the Poisson regression.
+
+
+##Further compare two models
+Below we further compare the estimates between the two models. As the results show, the Poisson regression estimates SEs that are always smaller (as shown by the narrower CIs) than those from the negbin. This implies that the Poisson regression leads to biased significance tests, and tends to make non-significant predictors significant. 
+```{r}
+stargazer(modP, modN, title="Model Comparison",
+          type="text",align=TRUE,single.row=TRUE)
+```
+
+
+##Example 2: Use robust SE and obtain incidence rate ratios (IRRs)
+To follow the convention in running negbin, we always use robust estimator of standard errors. This should also be done when you run the Poisson regression. 
+
+
+##Always use robust SE for the final model
+```{r}
+robust<-coeftest(modN, vcov = sandwich) 
+robust
+```
+
+
+##Below are the syntax and output for obtaining incidence rate ratios and 95%CIs
+```{r}
+est <- cbind(IRR = coef(modN), "2.5%"=robust[,1]-1.96*robust[,2], "97.5%"=robust[,1]+1.96*robust[,2])
+exp(est)
+```
+
+
+##Get incidence rate ratios for continuous variables per standard deviation increase (instead of per unit change)
+Use the z-transformed values (z = (x-mean(x))/sd(x) ) of the predictor to fit the model. The coefficients will then be log odds ratios for one SD change of the predictor.
+```{r}
+couart4$mentor_sd<-(couart4$mentor-mean(couart4$mentor))/sd(couart4$mentor)
+couart4$kid5_sd<-(couart4$kid5-mean(couart4$kid5))/sd(couart4$kid5)
+couart4$phd_sd<-(couart4$phd-mean(couart4$phd))/sd(couart4$phd)
+modN2<- glm.nb(art ~ factor(female) + factor(married) + kid5_sd + phd_sd + mentor_sd, data=couart4)
+#Compare two models
+est1 <- cbind(UnitChange = coef(modN), SDChange=coef(modN2))
+exp(est1)
+```
+
+
+##Interpretations
+- For a categorical variable ("female"): 
+- - Being a female scientist decreases the expected number of articles by a factor of 0.805, holding other variables constant.
+- - Being a female scientist decreases the expected number of articles by 19.5%, holding other variables constant.
+- For a continuous variable ("mentor"): 
+- - For a standard deviation increase in the mentor's productivity, roughly 10 articles, a scientist's expected productivity increases by a factor of 1.318, holding other variables constant.
+- - For every additional article by the mentor, a scientist's expected productivity increase by 3.0%, holding other variables constant.
+- - For a standard deviation increase in the mentor's productivity, roughly 10 articles, a scientist's expected productivity increases by 31.8%, holding other variables constant.
+
+
+
+##Example 3: Predicted probabilities (MEMs, MERs, & AMEs)
+- Below I show the commands and output of obtaining predicted probabilities. There are three types of them: MEMs, MERs, and AMEs.
+
+
+##MEMs
+```{r}
+#Get the marginal effects at mean 
+margins(modN, couart4, atmean=TRUE) ##Explain
+```
+The number of papers published decreases by 0.3 with one more children under 5, holding other variable at mean levels.
+
+
+```{r}
+#Define our outcomes from 0 to 5
+#Obtain means to create predicted probabilities
+modN1<- glm.nb(art ~ female + married + kid5 + phd + mentor, data=couart4)
+summary(modN1)
+newdata1 <- data.frame(female = mean(couart4$female), married=mean(couart4$married), kid5=mean(couart4$kid5), phd=mean(couart4$phd), mentor= mean(couart4$mentor))
+newdata1
+phat <- predict(modN1, newdata1, type = "response")
+cbind(No_of_Ppaers=0:5, MEM=dnbinom(0:5, mu=phat, size=modN1$theta))#events (no of papers) = 0 to 5
+```
+The probability of publishing 0 to 5 papers is 29.8%, 27.9%, 18.9%, 11.1%, 6.1% and 3.1% respectively, holding all variables at mean levels.
+
+
+##MERs (marginal effect at representative values) to see the effect of mentor's publications
+```{r}
+margins(modN, at = list(mentor = 1:6))
+```
+When the mentor publishes 1 paper, the number of papers published by PhD students decreases by 0.2 with one more children under 5, holding all other variable at mean levels.
+
+
+```{r}
+#Define our outcomes from 0 to 5
+##Obtain means to create predicted probabilities
+options(digits=3) 
+newdata2 <- data.frame(female = mean(couart4$female), married=mean(couart4$married), kid5=mean(couart4$kid5), phd=mean(couart4$phd), mentor= 1:6)
+newdata2
+phat <- predict(modN1, newdata2, type = "response")
+mentor1=dnbinom(0:5, mu=phat[1], size=modN1$theta) #mentor=1; events (no of papers) = 0 to 5
+mentor2=dnbinom(0:5, mu=phat[2], size=modN1$theta) #mentor=2; events (no of papers) = 0 to 5
+mentor3=dnbinom(0:5, mu=phat[3], size=modN1$theta) #mentor=3; events (no of papers) = 0 to 5
+mentor4=dnbinom(0:5, mu=phat[4], size=modN1$theta) #mentor=4; events (no of papers) = 0 to 5
+mentor5=dnbinom(0:5, mu=phat[5], size=modN1$theta) #mentor=5; events (no of papers) = 0 to 5
+mentor6=dnbinom(0:5, mu=phat[6], size=modN1$theta) #mentor=6; events (no of papers) = 0 to 5
+event<-c(0:5) #events (no of papers) = 0 to 5
+rbind(event, mentor1, mentor2,mentor3,mentor4,mentor5, mentor6)
+```
+When the mentor publishes 1 paper, the probability of publishing 0 to 5 papers is 36.3%, 29.7%, 17.5%, 9.0%, 4.3% and 1.9% respectively, holding all variables at mean levels.
+
+
+##Dr.Guo developed an Excel file (in the class repository) to obtain model predicted probabilities, primarily for MEMs and MERs. Results confirm that the two programs provide exactly the same results.
+
+![Example](Picture1.png)
+
+
+##AMEs
+The commands below create predicted probabilities for the count equal to 1, 2, ...m for each case. Averaging the sample all cases gives the AME, as: 
+```{r}
+margins(modN, couart4)
+```
+On average, with a one-unit increase in the number of papers published by mentor, the student is predicted to have 0.05 more papers published, other things equal.
+
+
+##Example 4: Graphic representation of the findings
+Below I show how to present a line chart depicting the impact of a continuous variable on the expected number of articles by group. I use the number of mentor's publications as the continuous variable, and gender as the group. In order to determine the scale of x-axis in the chart, I first take a look at the distribution of the continuous variable. 
+```{r}
+table(couart4$mentor)
+```
+
+```{r}
+local({
+  cplot(modN1, x="mentor", what="effect", data=couart4[couart4$female==1,],col="red",se.fill = rgb(1,0,0,.5))
+  cplot(modN1, x="mentor", what="effect", data=couart4[couart4$female==0,],draw="add",col = "blue",se.fill = rgb(0,1,0,.5))
+})
+```
+
+```{r}
+#OR if we want y axis to be the counts of papers
+newdata2 <- data.frame(
+  mentor = rep(seq(from = min(couart4$mentor), to = max(couart4$mentor), length.out = 100), 2),
+  female = factor(rep(0:1, each = 100)),
+  married = factor(rep(0:1, each = 100)),
+  phd = rep(seq(from = min(couart4$phd), to = max(couart4$phd), length.out = 100), 2),
+  kid5 = rep(seq(from = min(couart4$kid5), to = max(couart4$kid5), length.out = 100), 2))
+
+newdata2 <- cbind(newdata2, predict(modN, newdata2, type = "link", se.fit=TRUE))
+newdata2 <- within(newdata2, {
+  art <- exp(fit)
+})
+
+ggplot(newdata2, aes(mentor, art)) +
+  geom_line(aes(colour = female), size = 2) +
+  labs(x = "Mentor's # of articles", y = "Predicted Papers published")
+```
+
+
+##Example 5: Test interaction
+Testing interaction is an important procedure in statistical modeling. This often determines by a study's research questions or conceptual model. Researchers also sometimes test significant interaction through a data-driven procedure. In this example, I am interested in the joint effect of PhD program's prestige and mentor's number of publications on the study student's number of publications. Since both variables are continuous, we need to categorize one of the two variables first so that the interaction effects show the impact of a continuous variable on the DV by the level of the categorical variable. We first tabulate the two continuous variables. From the distribution, I choose mentor's publications as a variable on which I dichotomous it. I use 20 articles as a cutoff: those who published more than 20 articles as high. So the study investigates how the impact of PhD program's prestige on students' publication varies by mentor's high- versus low- publication status. Results of this interaction is very interesting, and important. Note that the interaction is statistically significant. 
+```{r}
+couart4$mentor_cat<-ifelse(couart4$mentor>20,1,0)
+modN3<- glm.nb(art ~ female + married + kid5 + phd*mentor_cat, data=couart4)
+summary(modN3)
+```
+
+```{r}
+modN3<- glm.nb(art ~ female + married + kid5 + phd*mentor_cat, data=couart4)
+local({
+  cplot(modN3, x="phd", what="effect", data=couart4[couart4$mentor_cat==1,],col="red",se.fill = rgb(1,0,0,.5))
+  cplot(modN3, x="phd", what="effect", data=couart4[couart4$mentor_cat==0,],draw="add",col = "blue",se.fill = rgb(0,1,0,.5))
+})
+```
+
+```{r}
+#OR if we want y axis to be the counts of papers
+modN4<- glm.nb(art ~ factor(female) + factor(married) + kid5 + phd*factor(mentor_cat), data=couart4)
+
+newdata4 <- data.frame(
+  mentor_cat = factor(rep(0:1, each = 100)),
+  female = factor(rep(0:1, each = 100)),
+  married = factor(rep(0:1, each = 100)),
+  phd = rep(seq(from = min(couart4$phd), to = max(couart4$phd), length.out = 100), 2),
+  kid5 = rep(seq(from = min(couart4$kid5), to = max(couart4$kid5), length.out = 100), 2))
+
+newdata4 <- cbind(newdata4, predict(modN4, newdata4, type = "link", se.fit=TRUE))
+newdata4 <- within(newdata4, {
+  art <- exp(fit)
+})
+
+ggplot(newdata4, aes(phd, art)) +
+  geom_line(aes(colour = mentor_cat), size = 2) +
+  labs(x = "PhD prestige", y = "Predicted Papers Published")
+```
+
+The results show that PhD program's impact on students' publications varies by the mentor's productivity rate. For a mentor who is not productive, the impact of PhD program's prestige has a positive impact on students' expected number of publications: the higher the prestige, the more articles the student produced. However, if the mentor is very productive, the impact of PhD program's prestige on students' productivity is negative: the higher the prestige, the lower the students' productivity. This finding is very interesting! Am I right that working with a very productive professor in a highly prestigious program is not necessarily productive? The chart shows that working with a professor who is very productive in a program with the highest prestige is the same as working with a not-productive professor in the same program. Don't generalize the findings without caution. Note that this study is about biochemist PhD students. 
+
+

@@ -1,0 +1,196 @@
+---
+title: "Data Visualization, Lecture 4(Yen's notes)"
+author: "Matt Wyczalkowski <m.wyczalkowski@wustl.edu>"
+date: "Feb 8th, 2018"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+My favorite ggplot2 reference: http://www.cookbook-r.com/Graphs/
+
+Load the ggplot2 library
+```{r}
+library(ggplot2)
+```
+# Read in BRFSS data
+Get rid of all rows which have any missing values (NA)
+```{r}
+data.fn<-"dat/BRFSS.48K.csv"
+BRFSS<-read.csv(data.fn)
+BRFSS <- BRFSS[rowSums(is.na(BRFSS))==0,]
+print(head(BRFSS))
+```
+# Bar Plot
+## Basic plot of counts
+Visualize employment status counts
+```{r}
+p <- ggplot(data=BRFSS)
+p <- p + geom_bar(aes(x=employed))
+p
+```
+Can't see the X-labels.
+
+## Rotate X-label text
+Jumping ahead a bit to themes
+```{r}
+p <- ggplot(data=BRFSS)
+p <- p + geom_bar(aes(x=employed))
+# Roate the X-axis text
+p <- p + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+p
+```
+## Order columns
+To change the order of the bars, change the order of factor levels by specifying the order explicitly.
+
+### By an arbitrary order
+```{r}
+# Relevel the factors (instead of relevel function)
+my.levels=c(
+"Retired",
+"Refused",
+"A student",
+"A homemaker",
+"Self-employed",
+"Unable to work",
+"Employed for wages",
+"Not asked or Missing",
+"Out of work for 1 year or more",
+"Out of work for less than 1 year"
+)
+BRFSS$employed <- factor(BRFSS$employed, levels = my.levels)
+p <- ggplot(data=BRFSS)
+p <- p + geom_bar(aes(x=employed))
+p <- p + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p
+```
+
+
+# Scatter Plot
+
+## Basic scatter plot of weight vs. height
+```{r}
+p <- ggplot(data=BRFSS)
+p <- p + geom_point(aes(x=height, y=weight))
+p
+```
+## Add color
+We wish to indicate diabetes status with the color of the point.  
+```{r}
+p <- ggplot(data=BRFSS)
+p <- p + geom_point(aes(x=height, y=weight, color=diabetes_short_label))
+p
+```
+## Use RColorBrewer Palette
+Want to use RColorBrewer palette "set 1", with specified order of values
+
+To see all RColorBrewer Palettes:
+```{r}
+library(RColorBrewer)
+display.brewer.all()
+```
+```{r}
+my.levels=c("NA",
+"No",
+"Yes",
+"pre/borderline",
+"Yes pregnancy",
+"Refused",
+"Unknown"
+)
+# Assign diabetes_shor_label 
+BRFSS$diabetes_short_label <- factor(BRFSS$diabetes_short_label, levels = my.levels)
+p <- ggplot(data=BRFSS)
+# Use the RcolorBrewer palette="Set1"
+p <- p + geom_point(aes(x=height, y=weight, color=diabetes_short_label)) + scale_color_brewer(palette="Set1")
+p
+```
+## Change axis labels
+Add units to axis labels.  Also, change legend name.
+```{r}
+my.levels=c("NA",
+"No",
+"Yes",
+"pre/borderline",
+"Yes pregnancy",
+"Refused",
+"Unknown"
+)
+BRFSS$diabetes_short_label <- factor(BRFSS$diabetes_short_label, levels = my.levels)
+p <- ggplot(data=BRFSS)
+#x, FULL. size, color
+p <- p + geom_point(aes(x=height, y=weight, color=diabetes_short_label)) + scale_color_brewer(palette="Set1", name="Diabetes Status")
+p <- p + xlab("Height [m]") + ylab("Weight [kg]")
+p
+```
+
+
+# Violin Plot
+What's the distribution of weight for different diabetes conditions?
+
+## Plot weights as points
+```{r}
+p <- ggplot(data=BRFSS)
+p <- p + geom_point(aes(x=diabetes_short_label, y=weight))
+p
+```
+This is hard to see because of overlap.  Let's jitter all points - add random displacement in X direction.  Also add color.
+```{r}
+p <- ggplot(data=BRFSS)
+p <- p + geom_point(aes(x=diabetes_short_label, y=weight, color=diabetes_short_label),size=0.1, position = position_jitter(w = 0.3, h = 0))
+p <- p + scale_color_brewer(palette="Set1", name="Diabetes Status")
+p
+```
+This is still hard to see because of overlapping points.  Reduce opacity (alpha) to make points more transparent
+```{r}
+p <- ggplot(data=BRFSS)
+p <- p + geom_point(aes(x=diabetes_short_label, y=weight, color=diabetes_short_label), position = position_jitter(w = 0.3, h = 0), alpha=0.1)
+p <- p + scale_color_brewer(palette="Set1", name="Diabetes Status")
+p
+```
+Reduce alpha even more...
+```{r}
+# alpha: change the transparency
+p <- ggplot(data=BRFSS)
+p <- p + geom_point(aes(x=diabetes_short_label, y=weight, color=diabetes_short_label), position = position_jitter(w = 0.3, h = 0), alpha=0.01)
+p <- p + scale_color_brewer(palette="Set1", name="Diabetes Status")
+p
+```
+## Violin plot
+Violin plots display the distribution (like a sideways histogram)
+
+```{r}
+#geom_violin
+p <- ggplot(data=BRFSS)
+p <- p + geom_violin(aes(x=diabetes_short_label, y=weight))
+p
+```
+### Adjust colors and theme to make it pretty
+
+```{r}
+p <- ggplot(data=BRFSS)
+#color=NA means transparent
+p <- p + geom_violin(aes(x=diabetes_short_label, y=weight, fill=diabetes_short_label), color=NA) + guides(fill=FALSE)
+
+p <- p + scale_fill_brewer(palette="Set1", name="Diabetes Status")
+p <- p + theme_bw() + xlab("Diabetes Status") + ylab("Weight [kg]")
+p <- p + theme(panel.grid.major.x = element_blank())
+p
+```
+
+### Superpose additional geoms
+
+```{r}
+p <- ggplot(data=BRFSS)
+p <- p + geom_violin(aes(x=diabetes_short_label, y=weight, fill=diabetes_short_label), color=NA) + guides(fill=FALSE)
+
+p <- p + geom_point(aes(x=diabetes_short_label, y=weight, color=diabetes_short_label), position = position_jitter(w = 0.3, h = 0), alpha=0.01) + guides(color=FALSE)
+
+p <- p + scale_fill_brewer(palette="Set1") + scale_color_brewer(palette="Set1", name="Diabetes Status") 
+p <- p + theme_bw() + xlab("Diabetes Status") + ylab("Weight [kg]")
+p <- p + theme(panel.grid.major.x = element_blank())
+p
+```
+

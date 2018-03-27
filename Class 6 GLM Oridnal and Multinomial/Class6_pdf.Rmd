@@ -1,0 +1,298 @@
+---
+title: 'Class Six (Yen): Multinomial and ordinal logiistic regression'
+author: "Xiaoyan Wang (Yen note)"
+date: "Feb 22, 2018"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+
+
+##Learning objectives
+
+-  Understand what multinomial and ordinal logitstic regressions are
+-  Know the assumptions of multinomial and ordinal logitstic regressions
+-  Be able to use R to perform multinomial and ordinal logistic regression
+-  Know how to perform hypothesis testing
+-  Know how to estimate and interpret odds ratio 
+-  Know how to predict and interpret the marginal effects
+
+##What is multinomial logistic regression (MLR)?
+
+-  A form of linear regression analysis conducted when the dependent variable is nominal with more than two levels (e.g., insurance status, occupation)
+-  Used to describe data and to explain the relationship between one dependent nominal variable and one or more independent variables. 
+
+##Crucial features
+
+- Estimates a separate binary logistic regression model for each dummy variables, therefore the result is J-1 binary logistic regression models, suppose our dependent nominal variable has J levels 
+- Each model conveys the effect of predictors on the probability of success in that category, in comparison to the reference category.
+
+
+##Link function 
+
+- Take the logarithm of the odds of the probability of y=m versus the probability of y=b, where b is the base outcome whose coefficients associated with the independent variables are constrained to be zero. 
+
+
+##Assumptions
+
+- Dependent variable is nominal with more than two levels (can also be ordinal variables)
+- One or more independent variables that are continuous, ordinal or nominal
+- Independence of the dependent variable (Hausman-McFadden test)
+- Independence of observations 
+- No multicollinearity
+- A linear relationship between any *continuous* independent variables and the logit transformation of the dependent variable.
+- No outliers or highly influential points (Pregibon's (1981) deltabeta or Cook's distance)
+- Unlike logistic regression where there are many statistics for performing model diagnostics, it is not as straightforward to do diagnostics with multinomial logistic regression models. 
+
+
+##MLR vs. binary logistic regression
+
+- Binary logit (2 nominal outcomes): we have 2-1 or one ?? vector (i.e., parameters showing the effect of each predictor on the logit), including one intercept term ??0
+- Multinomial logit (J nominal outcomes): we have J-1 sets of parameters, or J-1 sets of ??m (for m=1, 2, . J-1). Each ??m contains a non-zero intercept ??0 
+- You can view binary logit as a special case of multinomial logit model in which J=2
+
+##Example
+
+- Breast cancer data downlaoded from Surveillance, Epidemiology, and End Results Program (SEER), a premier data source for cancer statistics in the US. SEER collects incidence, prevalence and survival data.
+- Patients with primary breast cancer, aged between 18-65 years and diagnosed with Stage I to IV were included. 
+- In this study, we are interested in the effects of insurance status on the stage at diagnosis among breast cancer patients.
+- The covariates are comprised of patients' demographics.
+
+##Get the data and load libraries
+
+```{r, echo=TRUE,  warning=FALSE}
+rm(list=ls())
+#install.packages("nnet")
+#install.packages("MASS")
+#install.packages("erer")
+#install.packages("readr")
+#install.packages("knitr")
+#install.packages("tidyverse")
+library(readr) #for read txt file
+library(knitr) #for creating nicer tables
+library(tidyverse) # for various packages
+library(nnet) #Multinomial logistic regresison
+library(MASS) #Ordinal logistic regression
+library(erer) #Average marginal effects for the rdinal logistic regression
+Breast_SEER_Class6 <- read_delim("D:/Dropbox/@2018 Spring/ADA/Class 6 GLM Oridnal and Multinomial/Breast_SEER_Class6.txt", "\t", escape_double = FALSE, trim_ws = TRUE)
+str(Breast_SEER_Class6)
+```
+
+##Data Management
+
+```{r, echo=TRUE,  warning=FALSE}
+##Look at the data 
+names(Breast_SEER_Class6)<-c("Age", "Race", "Sex", "Diagnosis_year", "Stage", "First", "PatientID", "Insur", "Marital", "Poverty") 
+table(Breast_SEER_Class6$Insur)
+table(Breast_SEER_Class6$Stage)
+table(Breast_SEER_Class6$Sex)
+table(Breast_SEER_Class6$Race)
+table(Breast_SEER_Class6$First)
+
+#Transfer the character variables to numeric variables and rocode the factor variables
+#Label the variables
+Data <- Breast_SEER_Class6 %>%
+  mutate(Male_cat=factor(Sex),
+  First_cat=factor(First),
+  Age_num=as.numeric(gsub("([0-9]+).*$", "\\1",Age)), # [0-9]	All Digit; .	Any character, except \n or line terminator
+  Black_cat=ifelse(Race=="White"|
+                  Race=="Other (American Indian/AK Native, Asian/Pacific Islander)", 0,
+          ifelse(Race=="Black", 1, NA)),
+              Black_cat=factor(Black_cat, levels=0:1, labels = c("Non-Black", "Black")),
+Stage_cat=ifelse(Stage == "IA" | Stage == "IB", 0,
+ifelse(Stage == "IIA" | Stage == "IIB",1,
+ifelse(Stage == "IIIA" |Stage == "IIIA" 
+|Stage == "IIIC" |Stage =="IIINOS",2,
+ifelse(Stage =="IV", 3, NA)))),
+Stage_cat=factor(Stage_cat, levels=0:3, labels=c ("StageI", "StageII", "StageIII", "StageIV")),
+Insur_cat = ifelse(Insur == "Un,insured",0,
+ifelse(Insur == "Any Medicaid" ,1,
+ifelse(Insur == "Insured"
+|Insur == "Insured/No specifics", 2, NA))),
+Insur_cat=factor(Insur_cat, levels=0:2, labels=c ("Uninsured", "Medicaid", "Insured"))
+)
+```
+Reference for **gsu**: http://www.endmemo.com/program/R/gsub.php
+
+##Get the complete data: drop the cases who were did not have first primary diagnosis of breast cancer and with missing values on any variables used
+
+```{r, echo=TRUE,  warning=FALSE}
+Data1 <- Data %>%
+filter(First_cat!="No"&!is.na(Stage_cat)&!is.na(Insur_cat)&!is.na(Black_cat)&!is.na(Age_num)&!is.na(Male_cat))
+```
+
+##Execute a mutilnomial logistic regression
+
+###Below we use the multinom function from the *nnet* package to estimate a multinomial logistic regression model. 
+```{r, echo=TRUE, warning=FALSE}
+##Re-leveling data, choose stage IV as reference
+attach(Data1)
+Stage_cat_re <- relevel(Stage_cat, ref = "StageIV")
+##Execute a mutilnomial regression with insurance as independent variable and demographics as covariates
+mod <- multinom(Stage_cat_re ~ Insur_cat + Age_num + Male_cat + Black_cat)
+summary(mod)
+```
+
+##Interpretations
+
+- *Continous variable*
+- A one-year increase in age is associated with the increase in the log odds of being in stage I vs. stage IV in the amount of .021, holding other variables constant. 
+- *Categorical variable*
+- The log odds of being in stage I vs. stage IV will increase by 1.492 if changing from no insurance to private insurance, holding other variables constant. 
+- To know the effect of *Insured* on the logit of a non-base outcome (e.g.,stage II) relative to another non-base outcome (e.g.,stage III), you take the difference of the two *coefficients* (0.8579903-0.6583665=0.1996238).
+- Meaning: the log odds of being in stage II vs. stage III will increase by 0.200 if changing from no insurance to private insurance, holding other variables constant. 
+
+##Hypothesis test
+
+- Use Z-test to test individual parameter.
+- The p-value from such test indicates whether or not we can reject the null hypothesis of the parameter=0 relative to the effect on the base outcome at a given level of statistical significance. 
+```{r, echo=TRUE,  warning=FALSE}
+z <- summary(mod)$coefficients/summary(mod)$standard.errors
+# 2-tailed Z test
+p <- (1 - pnorm(abs(z), 0, 1)) * 2
+p
+```
+
+##Hypothesis test: Wald test and likelihood ratio test 
+
+- Test whether an independent variable is significant for the entire model with all outcomes (not from a single comparison). 
+- Test a group of parameters (i.e., multiple independent variables). 
+- Test whether or not two outcomes can be combined, that is to test the null hypothesis that the two categories are indistinguishable. 
+
+## Odds ratio
+
+```{r}
+## extract the coefficients from the model and exponentiate
+exp(coef(mod))
+#Example
+str(summary(mod))
+#95% CI of Medicaid effect on having stage I vs.stage IV
+exp(summary(mod)$coefficients["StageI",2] + qnorm(c(0.025,0.5,0.975))*summary(mod)$standard.errors["StageI",2])
+```
+
+##Interpretations
+
+- *Continous variable*
+- The odds of having stage I breast cancer relative to stage IV are 1.02 times greater with one-year increases in age, holding other variables constant. 
+- *Categorical variable*
+- The odds of having stage I breast cancer relative to stage IV are 4.44 times greater for privately insured patients than uninsured cases, holding other variables constant. 
+
+##Important notes about interpretation
+
+- "Using odds ratios to interpret the logit model is very common, but rarely is it sufficient for understanding the results of the model. We strongly prefer methods of interpretation that are based on predicted probabilities." (Long & Freese, 2014, p.227)
+- Marginal effects show the change in probability when the predictor or independent variable increases by one unit, holding all other independent variables constant at specific values. For continuous variables this represents the instantaneous change given that the 'unit' may be very small. For binary variables, the change is from 0 to 1, so one 'unit' as it is usually thought.
+
+##Three approaches showing marginal effects
+
+- Marginal effect at the mean (MEM): Compute the marginal effect of one independent variable with all other independent variables held at their means.
+- Marginal effect at representative values (MER): Compute the marginal effect of x with variables held at specific values that are selected for being especially instructive for the substantive questions being considered. The MEM is a special case of the MER.
+- Average marginal effect (AME): Compute the marginal effect of independent variable for each observation at its observed values, and then compute the average of these effects.
+- No single approach can meet all needs. The best should be a combination of all three that help addresses the research questions. 
+
+##Marginal effect at the mean (MEM) 
+
+- Due to the variable types inconsistence (e.g.,the mean value of Male variable may be not meaningful), however we can calculate here by hand.
+- The structural model
+![Structual function](Picture2.png)
+
+- Suppose J=5, the model can be expressed as:
+![Structual function](Picture3.png)
+
+##Marginal effect at representative values (MER)
+
+```{r, echo=TRUE,  warning=FALSE}
+MER<- data.frame(Insur_cat = "Insured", Age_num = 50,
+                 Male_cat="Male",Black_cat="Black")
+predict(mod, newdata = MER, "probs") # Put the specific case into the modeland see what proability for him to get cancer.
+```
+
+##Overview of ordinal outcome variables
+
+- Key features of an ordinal variable: it does have a ranking order, but distances between levels are not measureable
+- Alternative models
+- Binary logistic regression - collapse categories to create a dichotomous outcome
+- Multinomial logistic regression - ignore the ranking order by treating the outcome as a nominal variable
+
+##Ordinal logistic regression
+
+- Ordinal regression is used to predict the dependent variable with 'ordered' multiple categories and independent variables. 
+![Model link function](Figure2.tif)
+
+##Assumptions
+- Dependent variable should be ordinal variables with more than two levels.
+- One or more independent variables that are continuous, ordinal or categorical 
+- There is no multicollinearity.
+- Have proportional odds or parallel regression.
+![Parallel regression assumption](Picture4.png)
+
+##Execute a mutilnomial logistic regression
+
+```{r, echo=TRUE,  warning=FALSE}
+mod1 <- polr(Stage_cat ~ Insur_cat + Age_num + Male_cat + Black_cat, Hess=TRUE)
+summary(mod1)
+```
+
+##Hypothesis test
+
+- Use Z-test to test individual parameter 
+- The p-value from such test indicates whether or not we can reject the null hypothesis of parameter=0 at a given level of statistical significance. 
+
+```{r}
+## store table
+(ctable <- coef(summary(mod1)))
+## calculate and store p values
+p <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+p
+## combined table
+ctable <- cbind(ctable, "p value" = p)
+# default method gives profiled CIs
+ci <- confint(mod1) 
+ci
+```
+
+##Odds ratio and 95%CIs
+
+```{r}
+## odds ratios
+exp(cbind("Odds ratio" = coef(mod1), confint.default(mod1, level = 0.95)))
+```
+
+##Interpretation 
+
+- Exp(B) above was estimated, meaning compare odds from low to high.
+- Examples
+- *Continous variable*
+- The odds of having stage I versus combined outcomes stage II to IV are 0.973 times greater with one-year increase in age, holding other variables constant. 
+- *OR*
+- The odds of having stage I and II versus combined outcomes stage III and IV are 0.973 times greater with one-year increase in age, holding other variables constant. 
+- *Categorical variable*
+- The odds of having stage I versus combined outcomes stage II to IV are 0.450 times greater for patients with private insurance than the ones without insurance, holding other variables constant.
+- *OR*
+- The odds of having stage I and II versus combined outcomes stage III and IV are 0.450 times greater for patients with private insurance than the ones without insurance, holding other variables constant. 
+
+##Marginal effect at the mean (MEM)-calculate by hand based on the structural function
+
+- Suppose dependent variable has 3 levels, the model can be expressed as:
+![Structual function](Picture5.png)
+
+##Marginal effect at representative values (MER)
+
+```{r, echo=TRUE,  warning=FALSE}
+MER<- data.frame(Insur_cat = "Insured", Age_num = 50, Male_cat="Male",Black_cat="Black")
+predict(mod1, newdata = MER, "probs")
+```
+
+##Average marginal effect (AME)
+
+```{r, echo=TRUE,  warning=FALSE}
+AME <- ocME(mod1)
+AME
+```
+
+##Interpretation
+
+- Using the average marginal effects and holding all other variables at a constant level, we find that:
+- The probability of having stage IV for insured patients is lowerer than that for uninsured patients by 0.052;
+- Every one-year increase in patients' age increases the probability of having stage I by 0.007.

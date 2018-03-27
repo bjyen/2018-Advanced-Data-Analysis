@@ -1,0 +1,225 @@
+---
+title: 'Advanced Data Analyis HW7'
+subtitle: 'Poisson and Negative Binomial regression'
+author: "Bing-Jie Yen <bj.yen@wustl.edu>"
+date: "March 22nd, 2018"
+output: html_notebook
+---
+
+For this week's homework, we will again be using the 2016
+BRFSS data. The dataset link is here: Our motivating question for this week's
+exercise is what are the predictors of marijuana and hasish use rates. We will
+use the BRFSS data from Colorado citizens since they may be more likely to
+accurately report their marijuana or hasish use because marijuana is legal in that
+state. The question regarding marijuana or hasish use is as follows: "During the
+past 30 days, on how many days did you use marijuana or hasish?" The responses
+are coded as follows:
+
+* 1-30 Number of days
+* 88 None
+* 77 Don't know/Not Sure
+* 99 Refused
+* Blank Not asked or missing
+
+The dataset includes 14,958 observations and is not a sample of the BRFSS
+data like previously but includes all respondents from Colorado. Of note, this
+is not ideal data for this type of problem because there are a lot of 0's in the
+data (people who didn't use any marijuana or hashish in the last 30 days);
+however, the dataset is sufficient to illustrate the major key points for Poisson
+and Negative Binomial regression. Ideally, these data might be modeled using
+zero inflated negative binomial or hurdle regression which is beyond the scope
+of this course. A reading suggestion is provided however at the end for those
+who want to know more and it also may be helpful someday when you are faced
+with this problem in your professional careers.
+
+
+# Read in data and load libraries
+Import the data from the Github website (BRFSS.2016.co.xlsx) and load these libraries:MASS, lmtest, stargazer, sandwich, margins, readxl, ggplot2, and tidyverse for this homework.
+```{r results="hide"}
+library(ggplot2)
+library(reshape2)
+library(plotly)
+library(readxl)
+library(RColorBrewer)
+library(plyr)
+library(ggfortify)
+library(foreign)
+library(Hmisc)
+library(memisc)
+library(margins)
+library(sandwich)
+library(lmtest)
+library(MASS)
+# I change the directory to my gihub link because I somehow have difficulty to read 'xlsx' in Windows.
+BRFSS.CO<-'https://raw.githubusercontent.com/bjyen/2018-Advanced-Data-Analysis/master/BRFSS.2016.CO.csv'
+BRFSS.CO<-read.csv(BRFSS.CO)
+BRFSS.CO<-as.data.frame(BRFSS.CO)
+```
+# Recode 
+- Recode values for `MARIJANA`=88 to 0's and make a complete dataset by excluding individuals with values for `MARIJANA` of "NA", 77, and 99, and recode `MARIJANA` as an integer using the as.integer function.
+- Recode values for `sex` of 0 for female and 1 for male
+- Recode `income` as 3="Refused" and "Don't know/Not Sure", 2 as between <$10K-<25K, 1 as 25K-50K and 0 as >=50K. 
+
+
+```{r, results='hide'}
+# MARIJANA
+BRFSS.CO$MARIJANA[BRFSS.CO$MARIJANA==88]<-NA
+BRFSS.CO<-BRFSS.CO[!(BRFSS.CO$MARIJANA==77 | BRFSS.CO$MARIJANA==99),]
+BRFSS.CO[complete.cases(BRFSS.CO$MARIJANA,BRFSS.CO$sex),]
+names(BRFSS.CO)
+MARIJANA<-as.integer(BRFSS.CO$MARIJANA)
+# Sex, omit refused
+sex<-ifelse(BRFSS.CO$sex=="Female",0,
+            ifelse(BRFSS.CO$sex=="Male",1,NA))
+sex<-as.factor(sex)
+sex<-factor(sex, levels = c(0,1), labels = c("Female", "Male"))
+
+#Income
+summary(BRFSS.CO$income)
+str(BRFSS.CO$income)
+income_cat<-ifelse(
+  BRFSS.CO$income=='$10,000 to less than $15,000'|BRFSS.CO$income=='$15,000 to less than $20,000'|BRFSS.CO$income=='$20,000 to less than $25,000',2,
+    ifelse(BRFSS.CO$income=='$25,000 to less than $35,000'|BRFSS.CO$income=='$35,000 to less than $50,000',1,
+           ifelse(BRFSS.CO$income=='$50,000 to less than $75,000'|BRFSS.CO$income=='$75,000 or more',0,
+                  ifelse(BRFSS.CO$income=="Don't know/Not sure"| BRFSS.CO$income=='Refused',3,NA ))))
+BRFSS.CO$income_cat<-as.factor(income_cat)
+BRFSS.CO$income_cat<-factor(BRFSS.CO$income_cat,levels=c(0,1,2,3),labels=c('>$50K','$25K-50K','$10K-<25K','Refused/Dont know/Not sure'))
+income_cat<-as.factor(BRFSS.CO$income_cat)
+xtabs(~BRFSS.CO$income+income_cat) #check!
+```
+- Recode employed as 0-8 with "Employed for wages" coded as 0 and generate new variable `employed_cat`
+- Recode age as a binary variables with 0 as <50 and 1 as >=50 years old. (`age_cat`)
+- Convert all of the categorical variables to factor variables and label the levels. 
+```{r, results='hide'}
+summary(BRFSS.CO$employed)
+employed_cat<-ifelse(BRFSS.CO$employed=="Employed for wages",0,
+                   ifelse(BRFSS.CO$employed=="Self-employed",1,
+                       ifelse(BRFSS.CO$employed=="A homemaker",2,
+                           ifelse(BRFSS.CO$employed=="A student",3,
+          ifelse(BRFSS.CO$employed=="Out of work for 1 year or more",4,
+             ifelse(BRFSS.CO$employed=="Out of work for less than 1 year",5,
+              ifelse(BRFSS.CO$employed=="Refused",6,
+                     ifelse(BRFSS.CO$employed=="Retired",7,
+                        ifelse(BRFSS.CO$employed=="Unable to work",8,NA)))))))))
+employed_cat<-factor(employed_cat,levels=c(0,1,2,3,4,5,6,7,8),labels=c('Employed for wages',"Self-employed","A homemaker","A student","Out of work for 1 year or more","Out of work for less than 1 year","Refused","Retired","Unable to work"))
+BRFSS.CO$employed_cat<-as.factor(employed_cat)
+summary(employed_cat)
+# Code age as a binary variables with 0 as <50 and 1 as >=50 years old
+age_cat<-ifelse(BRFSS.CO$age<50,'0',
+                ifelse(BRFSS.CO$age>=50,'1',NA))
+
+BRFSS.CO$age_cat<-as.factor(age_cat)
+age_cat<-factor(age_cat, levels = c(0,1), labels = c("< 50 years old", ">=50 years old"))
+BRFSS.CO$age_cat<-as.factor(age_cat)
+
+```
+# Visualize data
+- a. Display a histogram of the number of counts of days marijuana or hasish was used in the last 30 days.
+
+```{r}
+hist(BRFSS.CO$MARIJANA, xlab="number of counts of days marijuana", ylab="Frequency",main="Histogram of marijuana usage",col="blue")
+```
+- b. Display histograms of the number of counts of days marijuana or hasish was used in the last 30 days by sex, employed category, income category, and age category (hint use `facet_grid`)
+```{r  fig2, fig.height = 5, fig.width = 12, fig.align = "center"}
+# Histograms of the number of counts of days marijuana or hasish by sex
+ggplot(BRFSS.CO,aes(x=MARIJANA,group=sex,fill=sex))+
+  geom_histogram(position="identity",alpha=0.5,binwidth=3)+theme_bw()+facet_grid(~sex)
+# Histograms of the number of counts of days marijuana or hasish by employement groups
+ggplot(BRFSS.CO,aes(x=MARIJANA,group=employed_cat,fill=employed_cat))+
+  geom_histogram(position="identity",alpha=0.5,binwidth=3)+theme_bw()+facet_grid(~employed_cat)+
+ theme(strip.background = element_blank())
+
+# Histograms of the number of counts of days marijuana or hasish by income groups
+ggplot(BRFSS.CO,aes(x=MARIJANA,fill=income_cat,color=income_cat))+
+  geom_histogram(position="identity",alpha=0.5,binwidth=3)+theme_bw()+facet_grid(~income_cat)
+
+# Histograms of the number of counts of days marijuana or hasish by age groups
+ggplot(BRFSS.CO,aes(x=MARIJANA,group=age_cat,fill=age_cat))+
+  geom_histogram(position="identity",alpha=0.5,binwidth=3)+theme_bw()+facet_grid(~age_cat)
+
+
+```
+- c. Comment on what you see. Are there any dfferences in the patterns of marijuana or hasish use in the last 30 days between males and females, employment categories, income categories and/or age categories?
+- - `sex`: From the figures above, there is significant difference on the patterns of marijuana or hasish use in the last 30 days. Male has higher avergae useage than females.
+- - `age_cat`: Between the age groups, the pattern of marijuana or hasish use in the last 30 days are similar but <50 years old group has higher frequency on the higher number of marijuana usage than >=50 years old.
+- - `income_cat`: Among income categories, >$50 K group has higher pattern of marijuana or hasish use in the last 30 days than other income groups. 
+- - `employed_cat`: Among employment groups, student group has lower pattern of marijuana or hasish use in the last 30 days than other employment groups.  
+
+#3. Poisson regression
+Run a Poisson regression model for age category, sex, income category, and employed category as predictors and Marijana/hashish use as the dependent variable (remember the predictors as factor variables).
+```{r}
+mod_poisson<- glm(MARIJANA ~ sex + age_cat + income_cat + employed_cat, family="poisson", data=BRFSS.CO)
+summary(mod_poisson)
+```
+
+#4. Negative Binomial regression
+Run a Negative Binomial regression model for sex, income category, and employed category as predictors and Marijana/hashish use as the dependent variable.
+```{r}
+mod_NB<- glm.nb(MARIJANA ~ sex + age_cat + income_cat + employed_cat, data=BRFSS.CO)
+summary(mod_NB)
+```
+# 5. 
+Compare models using the likelihood ratio test. Which model is better and on what basis do you make that conclusion? 
+```{r}
+##Compare models using likelihood ratio test
+lrtest(mod_poisson, mod_NB)
+```
+
+The highly significant p-value means that the negbin regression is better than the Poisson regression, we should accept the negbin results other than the Poisson regression.
+
+#6. Model comparison 
+As the results show, the Poisson regression estimates SEs that are always smaller (as shown by the narrower CIs) than those from the negbin. This implies that the Poisson regression leads to biased significance tests, and tends to make non-significant predictors significant. 
+```{r}
+library(stargazer)
+stargazer(mod_poisson, mod_NB, title="Model comparison - Poisson model vs Negative Binomial model ",
+          ci=TRUE,type="text",align=TRUE,single.row=TRUE)
+```
+
+# 7. 
+Compute robust standard errors and calculate incidence rate ratios and 95% CIs using the
+robust standard errors
+```{r}
+#Compute robust standard errors
+robust<-coeftest(mod_NB, vcov = sandwich) 
+robust
+##incidence rate ratios and 95% CIs using the robust standard errors
+est <- cbind(IRR = coef(mod_NB), "2.5%"=robust[,1]-1.96*robust[,2], "97.5%"=robust[,1]+1.96*robust[,2])
+exp(est)
+```
+
+#8. 
+Interpret the incidence rate ratio results for age category, sex, education category, and
+income category. Does the incidence rate of marijuana and hashish use in the last 30 days
+vary by the levels of these factors?
+
+* For a categorical variable (`sex`):
+ - - Being a male increases the expected number of marijuana use  by 1.12 times compared to a female, holding other variables constant.
+
+- For a categorical variable (`age_cat`):
+- - Being older than 50 years old has 0.80 times of expected number of marijuana use compared to a person younger than 50 years old with other variables constant. 
+
+- For a categorical variable (`income_cat`):
+- - A person with income between \$25K and \$50K has 1.28 times of expected number of marijuana use compared to a person with income  more than \$50K. 
+- - A person with income between \$10K and less than 25K has 1.44 times of expected number of marijuana use compared to a person with income  more than \$50K.  
+
+- For a categorical variable (`employed_cat`):
+- - A homemaker has 1.30 times of expected number of marijuana use comapared to a person employed for wages.
+- - A student has 0.73 times of expected number of marijuana use compared to a person employed for wages.
+- - A person unable to work has 1.22 times of expected number of marijuana use compared to a person employed for wages.
+
+
+
+For extra learning, how well did our models do at predicting 0's (run code below and see the
+output)? Not very well! This argues that a zero in???ated model or a hurdle model might be
+better. To read more see: 
+[Regression Models for Count Data in R](https://cran.r-project.org/web/packages/pscl/vignettes/countreg.pdf)
+```{r}
+mu <- predict(mod_poisson, type = "response") # predict expected mean count
+exp <- sum(dpois(x = 0, lambda = mu)) # sum the probabilities of a 0 count for each mean
+round(exp) # predicted number of 0's
+sum(BRFSS.CO$MARIJANA < 1) # observed number of 0's
+mu <- predict(mod_NB, type = "response") # predict expected mean count
+exp <- sum(dpois(x = 0, lambda = mu)) # sum the probabilities of a 0 count for each mean
+round(exp) # predicted number of 0's
+sum(BRFSS.CO$MARIJANA < 1) # observed number of 0's
+```
