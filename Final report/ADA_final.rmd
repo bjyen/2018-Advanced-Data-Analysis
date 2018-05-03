@@ -1,0 +1,233 @@
+---
+title: "Final report for ADA"
+author: "Bing-Jie Yen"
+date: "April 26, 2018"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+
+Data set: cross sectional data format from 2008, 2010, 2012, 2014
+
+# Load the package and read data
+```{r setup, include=FALSE}
+library(data.table)
+library(nnet)
+library(mice)
+library(mixcat)
+library(foreign)
+library(Hmisc)
+library(psych)
+library(mlogit)
+library(plm)
+library(pglm)
+library(lme4)
+library(stargazer)
+```
+# Read Stata data
+ -Read Stata data:`rndhrs_mergeall2.dta`
+ - This data set include 2008,2010,2012 and 2014 HRS
+ 
+```{r}
+data<-read.csv("D:/Dropbox/@2018 Spring/ADA/Final proposal/Data/rndhrs_merge2.csv",header=TRUE, sep=",")
+```
+
+# Descriptive statistics
+demographic characteristics which include age, gender, race (non-Hispanic White, non-Hispanic Black, Hispanic, and other), education levels, and marital status. Covariates related to health status and health insurance include: activities of daily living (ADLs), and instrumental activities of daily living (IADLs), and number of chronic disease, medical care utilization (hospital stays), medical expenditure (out-of pocket), and health insurance coverage. The main stratification variable  of interest is respondents' living arrangements, which is constructed as a four-category variable (living alone , living with spouse only, living with spouse and others, and living with others only) combing household composition and marital status, following the previous studies. 1,18 The detailed descriptions of living arrangement are included in the following sections. 
+
+Follow the baby boomers 1946-1964 (who were 44-62 in 2008). Since the HRS only cover who were over 50 years old. I follow cohort who were born durig 1946- 1958 (who were 50-62 years old)
+```{r}
+data$age[which((data$age>62|data$age<50) &data$year=="2008")]<-NA
+describe.by(data$age,data$year)
+sum(is.na(data$age))
+data<- data[-which(is.na(data$age)), ] # 17072 observations left
+
+```
+Dependent variable: serious psychological distress (depression) `r_cesd`
+```{r}
+# RwCESD is the sum of RwDEPRES, RwEFFORT, RwSLEEPR, RwFLONE, RwFSAD, RwGOING, (1-RwWHAPPY)
+#and (1-RwENLIFE). Thus the higher the score, the more negative the Respondent's feelings in the past week. 
+# min=0, max=8
+# generate new variable, 0-2, 3-7,8
+data$r_cesd<-as.numeric(data$r_cesd)
+r_cesd<-as.numeric(data$r_cesd)
+data$r_cesd_order<-ifelse(data$r_cesd>=0 & data$r_cesd<3,0,
+                        ifelse(data$r_cesd>=3 & data$r_cesd<8,1,
+                               ifelse(data$r_cesd>=8,2,NA)))
+data$r_cesd_order<-factor(data$r_cesd_order, levels = c(0,1,2), labels = c("Low CESD","Middle CESD","High CESD"))
+r_cesd_order <- ordered(data$r_cesd_order,c("Low CESD","Middle CESD","High CESD")) 
+summary(r_cesd_order)
+```
+
+Independent variables
+```{r}
+# household ID
+ï..hhidpn<-as.factor(data$ï..hhidpn)
+length(unique(ï..hhidpn))             # there are 5253 unique cohort
+# Retirement decision
+r_retire<-as.factor(data$r_retire)
+t.test(r_cesd~r_retire)      # there is difference in CESD among retirement groups
+
+year<-as.factor(data$year)
+summary(year)
+
+library(dplyr)
+data %>% group_by(ï..hhidpn) %>% filter(row_number(year) == 4)
+#http://www.matthieugomez.com/statar/group-by.html
+
+
+# Age
+age<-as.numeric(data$age)
+summary(age)
+cor.test(r_cesd,age)
+
+# Gender
+data$gender<-as.factor(data$gender)
+gender<-relevel(data$gender, ref="1.male")
+summary(gender)
+t.test(r_cesd~gender)
+
+
+#*1: non hispanic white, 2: non-hispanic black, 3: Hispanic, 4: other*
+
+data$race<-ifelse(data$race=="1.white/caucasian",0,
+             ifelse(data$race=="2.black/african american",1,
+                    ifelse(data$race=="3.other",2,NA)))
+data$race<-factor(data$race,levels=c(0,1,2),labels=c("White/Caucasian","Black/African American","Other"))
+race<-relevel(data$race,ref="White/Caucasian")
+summary(race)
+kruskal.test(r_cesd,race)
+
+# Insurance
+r_govmr<-as.factor(data$r_govmr) 
+r_govmd<-as.factor(data$r_govmr)
+r_hiothp<-as.factor(data$r_hiothp)
+xtabs(~r_govmr+r_govmd+r_hiothp,data)
+
+```
+
+Generate `r_insurance` heath insurance variable 
+- 0: without Medicare or Medicaid or other insurnace (n=10695)
+- 1: only with Medicare or Medicaid; (n=4343+576+441)
+- 2: Only with other insurance; (n=882)
+- 3: With Medicare or Medicaid and with other insurance"(n=990+19+14)
+
+-out-of-pocket medical expenditures`r_oopmd`  
+
+```{r}
+# 
+r_insurance<-ifelse(data$r_govmr=="0.no" & data$r_govmd=="0.no" & data$r_hiothp=="0.no",0,
+              ifelse((data$r_govmr=="1.yes" | data$r_govmd=="1.yes") &        data$r_hiothp=="0.no",1, 
+              ifelse(data$r_govmr=="0.no" & data$r_govmd=="0.no" & data$r_hiothp=="1.yes",2,
+                ifelse((data$r_govmr=="1.yes" | data$r_govmd=="1.yes")& data$r_hiothp=="1.yes",3,NA)))) 
+
+r_insurance<-as.factor(r_insurance)
+
+r_insurance<-factor(r_insurance, levels = c(0,1,2,3), labels = c("Without Medicare or Medicaid or other insurnace", "Only with Medicare or Medicaid","Only with other insurance","With Medicare or Medicaid and with other insurance"))
+summary(r_insurance)
+r_insurance<-relevel(r_insurance,ref="Without Medicare or Medicaid or other insurnace")
+
+# our of pocket medical expenditure
+r_oopmd<-as.numeric(data$r_oopmd)
+t.test(r_oopmd~r_retire)
+```
+
+
+Independent variables: 
+-- years of education (`raeduc`)
+-- total household income (`h_itot`)
+-- Number of chronic disease(`num_chronic`)
+-- ADLA and IADLA (`r_adla`,`r_iadla`)
+--  DELAYED WORD RECALL (`r_dlrc`)
+-- whether you retire or not`r_retire`
+```{r}
+#Education levels
+raeduc<-as.factor(data$raeduc)
+summary(aov(r_cesd ~ raeduc))
+
+# Total household income
+h_itot<-as.numeric(data$h_itot)
+cor.test(r_cesd,h_itot)
+
+# Measurement of quality of life
+r_adla<-as.numeric(data$r_adla)
+cor.test(r_cesd,r_adla)
+
+r_iadla<-as.numeric(data$r_iadla)
+cor.test(r_cesd,r_iadla)
+```
+Medical care utilization
+-- hospital stays (`r_hosp`)
+--difficulty to walk across room (`r_walkr`)
+-- marital status(`r_mstat`)
+- Medical care utilization: Home Care(`r_homcar`)
+-  # Nurs home stays, prv 2 yrs(`r_nrstim`)
+- # Doctor vists, prv 2 yrs(`r_doctim`)
+```{r}
+#hospital stays 
+data$r_hosp<-as.factor(data$r_hosp)
+data$r_hosp[data$r_hosp==".r"|data$r_hosp==".d"|data$r_hosp==".m"]<-NA
+
+r_hosp<-relevel(data$r_hosp,ref="0.no")
+
+t.test(r_cesd~r_hosp)
+
+#difficulty to walk across room
+data$r_walkr<-ifelse(data$r_walkr=="0.no","0.no",
+               ifelse(data$r_walkr=="1.yes","1.yes",
+                  ifelse(data$r_walkr=="2.can't do","2.can't do",
+                         ifelse(data$r_walkr=="9.don't do","9.don't do",NA))))
+data$r_walkr<-as.factor(data$r_walkr)
+r_walkr<-relevel(data$r_walkr,ref="0.no")
+summary(aov(r_cesd ~ r_walkr))
+```
+
+Financial stability
+- Income:R Pension + Annuity (`r_ipena`)
+- Whether family income is HwINPOV HwINPOVA
+below the poverty threshold`h_inpov` 
+						 
+```{r}
+# Income:R Pension + Annuity (`r_ipena`)
+r_ipena<-as.numeric(data$r_ipena)
+cor.test(r_cesd,r_ipena)
+
+# Whether family income is HwINPOV HwINPOVA below the poverty threshold`h_inpov` 
+data$h_inpov<-ifelse(data$h_inpov=="0.hh inc above pov thresh",0,
+                ifelse(data$h_inpov=="1.hh inc below pov thresh",1,NA))
+data$h_inpov<-factor(data$h_inpov, levels = c(0,1), labels = c("HH income above poverty threshold","HH income below poverty threshold"))
+h_inpov<-relevel(data$h_inpov,ref="HH income above poverty threshold")
+t.test(r_cesd~h_inpov)
+
+```
+
+
+
+# Demographic statistics
+
+
+```{r}
+# interaction between age and retire,nope
+#model<-lmer(r_cesd~ age*factor(r_retire)+factor(gender)+factor(race)+factor(raeduc)+r_hosp+r_insurance+r_nrstim+r_walkr+r_doctim+r_ipena+h_inpov+r_oopmd+r_adla+r_iadla+(1|ï..hhidpn)+(1|year),data=data, REML=FALSE)
+#summary(model)
+
+
+#stargazer(model, title="Model Comparison",
+ #         type="text",align=TRUE,single.row=TRUE)
+```
+```{r}
+#model3<-lmer(r_cesd~ (age+factor(r_insurance)+factor(gender)+factor(race)+factor(raeduc)+r_hosp+r_nrstim+r_walkr+r_doctim+r_ipena+h_inpov+r_oopmd+r_adla+r_iadla+num_chronic+data$r_dlrc) *factor(r_retire)+(1|ï..hhidpn)+(1|year),data=data, REML=FALSE)
+
+#stargazer(model3, title="Model Comparison",
+  #        type="text",align=TRUE,single.row=TRUE)
+```
+```{r}
+model4<-lmer(r_cesd~ factor(gender)+(age+factor(r_insurance)+factor(race)+factor(raeduc)+h_itot+r_hosp+r_nrstim+r_walkr+r_doctim+r_ipena+h_inpov+r_oopmd+r_adla+r_iadla+num_chronic+data$r_dlrc) *factor(r_retire)+(1|ï..hhidpn)+(1|year),data=data, REML=FALSE)
+summary(model4)
+stargazer(model4, title="Model Comparison",
+          type="text",align=TRUE,single.row=TRUE)
+```
+
